@@ -1,5 +1,5 @@
-#!/Users/ccc/miniconda3/envs/analight3/bin/python
-# coding: utf-8
+#!/usr/bin/env python
+# # coding: utf-8
 
 # How to concatenate several years of ocean outputs from Mk3L.
 # 
@@ -7,34 +7,24 @@
 
 
 import glob
+import os.path
 import xarray as xr
 import pandas as pd
 import argparse
 
 
-def time_coord(ds):
-    '''Create a proper time coordinate for the ocean output from Mk3L.
-    ds: xarray dataset from reading Mk3L ocean output(s)'''
-
-    year = list(range(ds.sizes['month']//12))
-    year = [str(i+1800)+'{:0>2}'.format(m+1) for i in year for m in range(12)]
-
-    time=pd.to_datetime(year, format="%Y%m")
-
-    return time
-
 def concat_ocean(path, file_template):
-    file_list = sorted(glob.glob(path+file_template))
-    file_list
+    fname = os.path.join(path, file_template)
+    file_list = sorted(glob.glob(fname))
 
     ds = xr.open_mfdataset(file_list, concat_dim='month')
     # New time coordinate to include the year. 
-    # Arbitrary add 1800 to make it easier to deal with the date! (Calendar issues)
-    time=time_coord(ds)
+    time=xr.cftime_range(start='0001', periods=600, freq='MS', calendar='noleap')
     
     # Replace the month coordinate with these new values and rename to time
     ds = ds.assign_coords(month=time).rename(month='time')
     return ds
+
 
 if __name__ == '__main__':
     # User inputs:
@@ -43,12 +33,17 @@ if __name__ == '__main__':
     parser.add_argument('-r',default='ctl01', help='Name of the experiment', dest='run')
 
     args = parser.parse_args()
-    file_template = f'com.{args.run}.*.nc'
-    print(file_template)
+    file_template = f'com.{args.run}.[0-9]*.nc'
+
 
     test = concat_ocean(args.path, file_template)
-    for var in test.variables:
-        test[var].to_netcdf(f'com.ctl01.{var}_all_yr.nc')
+    clim = test.groupby('time.year').mean(dim='time')  # Annual mean
+    dd = {var: var+"_clim" for var in clim.data_vars}  # Rename clim variables
+    clim = clim.rename(dd)
+    for var in test.data_vars:
+        fname = os.path.join(args.path,f'com.ctl01.{var}_all_yr.nc')
+        ds = xr.merge([test[var], clim[var+"_clim"]])
+        ds.to_netcdf(fname)
 
 
 
